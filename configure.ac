@@ -287,19 +287,21 @@ if test `echo "$machine" | cut -b 1-2` == "dm"; then
 fi
 if test `echo "$machine" | cut -b 1-2` == "vu"; then
 	AC_DEFINE([VUPLUS],[1],[build for VUPLUS ])
-	AC_DEFINE([TYPE2],[1],[build bybass TYPE2])
 fi
 if test `echo "$machine" | cut -b 1-4` == "gb73"; then
 	AC_DEFINE([GIGABLUEMIPS],[1],[build for GIGABLUEMIPS ])
 fi
-if [ test "$machine" = "xc7362" || test "$machine" = "xc7346" ]; then
+if test "$machine" == "xc7362" -o "$machine" == "xc7346"; then
 	AC_DEFINE([TYPE2],[1],[build bybass TYPE2])
 fi
 
-if [ test "$machine" = "hd51" -o "$BOXTYPE" == "vs1500"]; then
+if test "$machine" == "hd51" -o "$machine" == "vs1500" -o "$machine" == "h7" -o "$machine" == "8100s"; then
 	AC_DEFINE([MAX_DTS_FRAMESIZE_2012],[1],[max dts framesize supported by driver])
 fi
 
+if test "$machine" == "u5" -o "$machine" == "u5pvr" -o "$machine" == "u51" -o "$machine" == "u52" -o "$machine" == "u53" -o "$machine" == "h9" -o "$machine" == "hd60"; then
+	AC_DEFINE([HISILICON],[1],[build for HISILICON ])
+fi
 DTS_LIBS="-ldca $LIBM"
 AC_SUBST(DTS_LIBS)
 AM_CONDITIONAL(HAVE_DTSDOWNMIX, test "$have_dtsdownmix" = "yes")

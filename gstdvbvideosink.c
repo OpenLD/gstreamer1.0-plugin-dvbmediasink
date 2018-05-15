@@ -856,6 +856,7 @@ static int video_write(GstBaseSink *sink, GstDVBVideoSink *self, GstBuffer *buff
 		}
 		if (pfd[1].revents & POLLOUT)
 		{
+			int wr = 0;
 			size_t queuestart, queueend;
 			GstBuffer *queuebuffer;
 			GST_OBJECT_LOCK(self);
@@ -865,7 +866,7 @@ static int video_write(GstBaseSink *sink, GstDVBVideoSink *self, GstBuffer *buff
 				GstMapInfo queuemap;
 				gst_buffer_map(queuebuffer, &queuemap, GST_MAP_READ);
 				queuedata = queuemap.data;
-				int wr = write(self->fd, queuedata + queuestart, queueend - queuestart);
+				wr = write(self->fd, queuedata + queuestart, queueend - queuestart);
 				gst_buffer_unmap(queuebuffer, &queuemap);
 				if (wr < 0)
 				{
@@ -895,7 +896,7 @@ static int video_write(GstBaseSink *sink, GstDVBVideoSink *self, GstBuffer *buff
 				continue;
 			}
 			GST_OBJECT_UNLOCK(self);
-			int wr = write(self->fd, data + written, len - written);
+			wr = write(self->fd, data + written, len - written);
 			if (wr < 0)
 			{
 				switch (errno)
@@ -1123,6 +1124,13 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			}
 		}
 		else if (self->codec_type == CT_VP9 || self->codec_type == CT_VP8 || self->codec_type == CT_VP6 || self->codec_type == CT_SPARK) {
+#if defined(VUPLUS)
+			if (self->codec_type == CT_VP9)
+			{
+				uint32_t vp9_pts = (GST_TIME_AS_USECONDS(GST_BUFFER_PTS_IS_VALID(buffer) ? GST_BUFFER_PTS(buffer) : GST_BUFFER_DTS(buffer)) *45) / 1000;
+				memcpy(&pes_header[9], &vp9_pts, sizeof(vp9_pts));
+			}
+#endif
 			uint32_t len = data_len + 4 + 6;
 			memcpy(pes_header+pes_header_len, "BCMV", 4);
 			pes_header_len += 4;
@@ -1133,7 +1141,11 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 			pes_header[pes_header_len++] = (len & 0x0000FF00) >> 8;
 			pes_header[pes_header_len++] = (len & 0x000000FF) >> 0;
 			pes_header[pes_header_len++] = 0;
+#if defined(VUPLUS)
 			pes_header[pes_header_len++] = 0;
+#else
+			pes_header[pes_header_len++] = self->codec_type == CT_VP9 ? 1 : 0;
+#endif
 			if (self->codec_type == CT_VP6)
 				pes_header[pes_header_len++] = 0;
 		}
@@ -1247,12 +1259,90 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 		payload_len += 4;
 	}
 
+#if defined(VUPLUS) || defined(HISILICON)
 	pes_set_payload_size(payload_len, pes_header);
-
 	if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
-
 	if (video_write(sink, self, buffer, data - original_data, (data - original_data) + data_len) < 0) goto error;
+#else
+	if (self->codec_type == CT_VP9)
+	{
+		if (payload_len > 0x8008)
+			payload_len = 0x8008;
 
+		int offs = data - original_data;
+		int bytes = payload_len - 10 - 8;
+
+		pes_set_payload_size(payload_len, pes_header);
+
+		if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
+		if (video_write(sink, self, buffer, offs, offs + bytes) < 0) goto error;
+
+		offs += bytes;
+
+		while (bytes < data_len)
+		{
+			int left = data_len - bytes;
+			int wr = 0x8000;
+			if (wr > left)
+				wr = left;
+
+			gst_buffer_unmap(self->pesheader_buffer, &pesheadermap);
+			gst_buffer_map(self->pesheader_buffer, &pesheadermap, GST_MAP_WRITE);
+			pes_header = pesheadermap.data;
+
+			//pes_header[0] = 0x00;
+			//pes_header[1] = 0x00;
+			//pes_header[2] = 0x01;
+			//pes_header[3] = 0xE0;
+			pes_header[6] = 0x81;
+			pes_header[7] = 0x00;
+			pes_header[8] = 0x00;
+			pes_header_len = 9;
+
+			pes_set_payload_size(wr + 3, pes_header);
+
+			if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
+			if (video_write(sink, self, buffer, offs, offs + wr) < 0) goto error;
+
+			bytes += wr;
+			offs += wr;
+		}
+
+		gst_buffer_unmap(self->pesheader_buffer, &pesheadermap);
+		gst_buffer_map(self->pesheader_buffer, &pesheadermap, GST_MAP_WRITE);
+		pes_header = pesheadermap.data;
+
+		//pes_header[0] = 0x00;
+		//pes_header[1] = 0x00;
+		//pes_header[2] = 0x01;
+		//pes_header[3] = 0xE0;
+		pes_header[4] = 0x00;
+		pes_header[5] = 0xB2;
+		pes_header[6] = 0x81;
+		pes_header[7] = 0x01;
+		pes_header[8] = 0x14;
+		pes_header[9] = 0x80;
+		pes_header[10] = 'B';
+		pes_header[11] = 'R';
+		pes_header[12] = 'C';
+		pes_header[13] = 'M';
+		memset(pes_header+14, 0, 170);
+		pes_header[26] = 0xFF;
+		pes_header[27] = 0xFF;
+		pes_header[28] = 0xFF;
+		pes_header[29] = 0xFF;
+		pes_header[33] = 0x85;
+
+		if (video_write(sink, self, self->pesheader_buffer, 0, 184) < 0) goto error;
+	}
+	else
+	{
+		pes_set_payload_size(payload_len, pes_header);
+		if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
+		if (video_write(sink, self, buffer, data - original_data, (data - original_data) + data_len) < 0) goto error;
+	}
+
+#endif
 	if (GST_BUFFER_PTS_IS_VALID(buffer) || (self->use_dts && GST_BUFFER_DTS_IS_VALID(buffer)))
 	{
 		self->pts_written = TRUE;
