@@ -299,9 +299,14 @@ if test "$machine" == "hd51" -o "$machine" == "vs1500" -o "$machine" == "h7" -o 
 	AC_DEFINE([MAX_DTS_FRAMESIZE_2012],[1],[max dts framesize supported by driver])
 fi
 
-if test "$machine" == "u5" -o "$machine" == "u5pvr" -o "$machine" == "u51" -o "$machine" == "u52" -o "$machine" == "u53" -o "$machine" == "h9" -o "$machine" == "hd60"; then
+if test "$machine" == "u5" -o "$machine" == "u41" -o "$machine" == "u42" -o "$machine" == "u43" -o "$machine" == "u5pvr" -o "$machine" == "u51" -o "$machine" == "u52" -o "$machine" == "u53" -o "$machine" == "u532" -o "$machine" == "u533" -o "$machine" == "u54" -o "$machine" == "u55" -o "$machine" == "u56" -o "$machine" == "h9" -o "$machine" == "h9combo" -o "$machine" == "h10" -o "$machine" == "hd60" -o "$machine" == "hd61" -o "$machine" == "cc1" -o "$machine" == "sf8008" -o "$machine" == "sf8008m" -o "$machine" == "ustym4kpro" -o "$machine" == "v8plus" -o "$machine" == "multibox" -o "$machine" == "gbmv200" -o "$machine" == "beyonwizv2" -o "$machine" == "viper4k"; then
 	AC_DEFINE([HISILICON],[1],[build for HISILICON ])
 fi
+
+if test "$machine" == "osmio4k" -o "$machine" == "osmio4kplus" -o "$machine" == "osmini4k"; then
+	AC_DEFINE([OSMIO4K],[1],[build for OSMIO4K ])
+fi
+
 DTS_LIBS="-ldca $LIBM"
 AC_SUBST(DTS_LIBS)
 AM_CONDITIONAL(HAVE_DTSDOWNMIX, test "$have_dtsdownmix" = "yes")

@@ -541,11 +541,11 @@ static GstCaps *gst_dvbaudiosink_get_caps(GstBaseSink *basesink, GstCaps *filter
 #endif
 	);
 
-#if defined(HAVE_DTS) && !defined(DREAMBOX)
+#if defined(HAVE_DTS) && ((!defined(DREAMBOX) && !defined(VUPLUS) && !defined(OSMIO4K)) || (defined(VUPLUS) && !defined(HAVE_DTSDOWNMIX)))
 	/* for the time the static cap has been limited to not be used in case of dts_audio_cd media */
 	gst_caps_append(caps, gst_caps_from_string(DTSCAPS));
 #endif
-#ifdef HAVE_DTSDOWNMIX && defined(DREAMBOX)
+#if defined(HAVE_DTSDOWNMIX) && (defined(DREAMBOX) || defined(VUPLUS) || defined(OSMIO4K))
 	if (!get_ac3_downmix_setting())
 	{
 		gst_caps_append(caps, gst_caps_from_string(DTSCAPS));
@@ -571,6 +571,9 @@ static gboolean gst_dvbaudiosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 
 	self->skip = 0;
 	self->aac_adts_header_valid = FALSE;
+	self->fixed_buffersize = 0;
+	self->fixed_bufferduration = GST_CLOCK_TIME_NONE;
+	self->fixed_buffertimestamp = GST_CLOCK_TIME_NONE;
 
 	GST_INFO_OBJECT (self, "caps = %" GST_PTR_FORMAT, caps);
 

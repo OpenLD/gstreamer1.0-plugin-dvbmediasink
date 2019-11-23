@@ -150,6 +150,7 @@ enum
 enum
 {
 	SIGNAL_GET_DECODER_TIME,
+	SIGNAL_GET_VIDEO_CODEC,
 	LAST_SIGNAL
 };
 
@@ -299,6 +300,7 @@ static gboolean gst_dvbvideosink_unlock (GstBaseSink * basesink);
 static gboolean gst_dvbvideosink_unlock_stop (GstBaseSink * basesink);
 static GstStateChangeReturn gst_dvbvideosink_change_state (GstElement * element, GstStateChange transition);
 static gint64 gst_dvbvideosink_get_decoder_time (GstDVBVideoSink *self);
+static gint64 gst_dvbvideosink_get_video_codec (GstDVBVideoSink *self);
 
 /* initialize the plugin's class */
 static void gst_dvbvideosink_class_init(GstDVBVideoSinkClass *self)
@@ -355,6 +357,15 @@ static void gst_dvbvideosink_class_init(GstDVBVideoSinkClass *self)
 		NULL, NULL, gst_dvbsink_marshal_INT64__VOID, G_TYPE_INT64, 0);
 
 	self->get_decoder_time = gst_dvbvideosink_get_decoder_time;
+
+	gst_dvb_videosink_signals[SIGNAL_GET_VIDEO_CODEC] =
+		g_signal_new ("get-video-codec",
+		G_TYPE_FROM_CLASS (self),
+		G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
+		G_STRUCT_OFFSET (GstDVBVideoSinkClass, get_video_codec),
+		NULL, NULL, gst_dvbsink_marshal_INT64__VOID, G_TYPE_INT64, 0);
+
+	self->get_video_codec = gst_dvbvideosink_get_video_codec;
 }
 
 #define H264_BUFFER_SIZE (64*1024+2048)
@@ -506,6 +517,12 @@ static gint64 gst_dvbvideosink_get_decoder_time(GstDVBVideoSink *self)
 	cur -= self->timestamp_offset;
 
 	return cur;
+}
+
+static gint64 gst_dvbvideosink_get_video_codec(GstDVBVideoSink *self)
+{
+	// returns a superset of streamtypes available in lib/dvb/decoder.h
+	return self->stream_type;
 }
 
 static gboolean gst_dvbvideosink_unlock(GstBaseSink *basesink)
@@ -845,6 +862,13 @@ static int video_write(GstBaseSink *sink, GstDVBVideoSink *self, GstBuffer *buff
 				{
 					s = gst_structure_new ("eventProgressiveChanged",
 						"progressive", G_TYPE_INT, evt.u.frame_rate, NULL);
+					msg = gst_message_new_element (GST_OBJECT(sink), s);
+					gst_element_post_message (GST_ELEMENT(sink), msg);
+				}
+				else if (evt.type == 17 /*VIDEO_EVENT_GAMMA_CHANGED*/)
+				{
+					s = gst_structure_new ("eventGammaChanged",
+						"gamma", G_TYPE_INT, evt.u.frame_rate, NULL);
 					msg = gst_message_new_element (GST_OBJECT(sink), s);
 					gst_element_post_message (GST_ELEMENT(sink), msg);
 				}
@@ -1259,7 +1283,7 @@ static GstFlowReturn gst_dvbvideosink_render(GstBaseSink *sink, GstBuffer *buffe
 		payload_len += 4;
 	}
 
-#if defined(VUPLUS) || defined(HISILICON)
+#if defined(VUPLUS) || defined(HISILICON) || defined(OSMIO4K)
 	pes_set_payload_size(payload_len, pes_header);
 	if (video_write(sink, self, self->pesheader_buffer, 0, pes_header_len) < 0) goto error;
 	if (video_write(sink, self, buffer, data - original_data, (data - original_data) + data_len) < 0) goto error;
@@ -1504,7 +1528,7 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 					{
 						len = (data[cd_pos + 1] << 8) | data[cd_pos + 2];
 						cd_pos += 3;
-						if (cd_len >= (cd_pos+len))
+						if ((cd_len >= (cd_pos+len)) && (tmp_len+len+4 < 2048))
 						{
 							memcpy(tmp+tmp_len, "\x00\x00\x00\x01", 4);
 							tmp_len += 4;
@@ -1580,6 +1604,7 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 							break;
 						}
 						// ignore flags + NAL type (1 byte)
+						int nal_type = data[pos] & 0x3f;
 						int nal_count = data[pos + 1] << 8 | data[pos + 2];
 						pos += 3;
 						for (j = 0; j < nal_count; j++) {
@@ -1593,10 +1618,17 @@ static gboolean gst_dvbvideosink_set_caps(GstBaseSink *basesink, GstCaps *caps)
 								GST_ELEMENT_ERROR (self, STREAM, DECODE, ("Buffer underrun in extra nal (%d >= %ld)", pos + 2 + nal_size, cd_len), (NULL));
 								break;
 							}
-							memcpy(tmp+tmp_len, "\x00\x00\x00\x01", 4);
-							tmp_len += 4;
-							memcpy(tmp + tmp_len, data + pos, nal_size);
-							tmp_len += nal_size;
+							if ((nal_type == 0x20 || nal_type == 0x21 || nal_type == 0x22) && ((tmp_len + 4 + nal_size) < 2048 )) // use only VPS, SPS, PPS nals
+							{
+								memcpy(tmp+tmp_len, "\x00\x00\x00\x01", 4);
+								tmp_len += 4;
+								memcpy(tmp + tmp_len, data + pos, nal_size);
+								tmp_len += nal_size;
+							}
+							else if ((tmp_len + 4 + nal_size) >= 2048)
+							{
+								GST_ELEMENT_WARNING (self, STREAM, DECODE, ("Ignoring nal as tmp buffer is too small tmp_len + nal = %d", tmp_len + 4 + nal_size), (NULL));
+							}
 							pos += nal_size;
 						}
 					}
